@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>心肺物理治療小工具</title>
+<style>
+:root{--bg:#f6f7f9;--card:#fff;--text:#1c2430;--muted:#667085;--line:#d9dee6;--accent:#0f766e;--accentbg:#e3f4f1;--warn:#b45309;color-scheme:light dark;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#12171d;--card:#1b222b;--text:#e8ecf1;--muted:#98a2b3;--line:#2e3846;--accent:#4fd1c0;--accentbg:#16342f;--warn:#f6ad55}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font-family:system-ui,-apple-system,"Noto Sans TC","PingFang TC","Microsoft JhengHei",sans-serif;line-height:1.5}
+main{max-width:640px;margin:0 auto;padding:20px 16px 40px}
+h1{font-size:1.35rem;margin:0 0 12px}
+.sec{font-size:.85rem;color:var(--muted);font-weight:600;margin:12px 0 6px}
+.tabs{display:grid;grid-template-columns:repeat(2,1fr);gap:8px;margin-bottom:8px}
+@media(min-width:520px){.tabs.four{grid-template-columns:repeat(4,1fr)}}
+.tab{padding:10px 6px;border:1px solid var(--line);background:var(--card);color:var(--text);border-radius:10px;font-size:.95rem;cursor:pointer}
+.tab[aria-selected="true"]{background:var(--accent);color:var(--bg);border-color:var(--accent);font-weight:600}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:16px;margin:14px 0}
+.formula{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.85rem;background:var(--accentbg);padding:8px 10px;border-radius:8px;margin-bottom:14px;overflow-x:auto;white-space:nowrap}
+.row{display:flex;gap:8px;margin-bottom:12px;align-items:flex-end}
+.field{flex:1;min-width:0}
+label{display:block;font-size:.85rem;color:var(--muted);margin-bottom:4px}
+input,select{width:100%;padding:10px;font-size:1rem;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--text)}
+.unit{flex:0 0 38%}
+.res{background:var(--accentbg);border-radius:12px;padding:12px;margin-bottom:10px}
+.res .k{font-size:.8rem;color:var(--muted)}
+.res .v{font-size:1.8rem;font-weight:700;color:var(--accent);font-variant-numeric:tabular-nums}
+.res .u{font-size:.8rem;color:var(--muted);margin-left:4px;font-weight:400}
+.note{font-size:.82rem;color:var(--muted);margin:0}
+.warn{color:var(--warn);font-size:.85rem;min-height:1.2em;margin-top:4px}
+</style>
+</head>
+<body>
+<main>
+<h1>心肺物理治療小工具</h1>
+
+<div class="sec">攝氧量計算器</div>
+<div class="tabs four" id="tabsA" role="tablist"></div>
+<div class="sec">六分鐘行走測試</div>
+<div class="tabs" id="tabsB" role="tablist"></div>
+
+<div class="card">
+  <div class="formula" id="formula"></div>
+  <div id="inputs"></div>
+  <div class="warn" id="warn"></div>
+</div>
+
+<div class="res"><div class="k" id="vk">Gross VO₂</div><div><span class="v" id="vo2">—</span><span class="u" id="vu">mL·kg⁻¹·min⁻¹</span></div></div>
+<div class="res"><div class="k" id="mk">METs</div><div><span class="v" id="met">—</span><span class="u" id="mu"></span></div></div>
+
+<div class="card">
+<p class="note">說明：坡度以百分比輸入（內部換算為小數）。行走公式適用速度約 50–100 m/min（3.0–6.0 km/h），跑步公式適用 &gt;134 m/min（&gt;8.0 km/h），若確實為慢跑，約 4.8 km/h 以上亦可使用；功率最準確範圍：下肢 50–200 W、上肢 25–125 W。METs = VO₂ ÷ 3.5。本工具僅供臨床與研究參考。</p>
+</div>
+</main>
+
+<script>
+const MODES={
+  walk:{name:'行走',formula:'VO₂ = 3.5 + 0.1×速度 + 1.8×速度×坡度',type:'tread',a:0.1,b:1.8},
+  run:{name:'跑步',formula:'VO₂ = 3.5 + 0.2×速度 + 0.9×速度×坡度',type:'tread',a:0.2,b:0.9},
+  leg:{name:'下肢肌功器',formula:'VO₂ = 7 + 1.8×功率 ÷ 體重',type:'erg',c:7,k:1.8},
+  arm:{name:'上肢手搖車',formula:'VO₂ = 3.5 + 3×功率 ÷ 體重',type:'erg',c:3.5,k:3},
+  sixmw:{name:'預測VO₂peak',formula:'VO₂peak = 70.161 + 0.023×距離 − 0.276×體重 − 6.79×性別 − 0.193×靜息心率 − 0.191×年齡',type:'6mw'},
+  enr:{name:'6MWD預測值',formula:'男：7.57×身高 − 5.02×年齡 − 1.76×體重 − 309；女：2.11×身高 − 2.29×體重 − 5.78×年齡 + 667',type:'enr'}
+};
+const GROUPS={tabsA:['walk','run','leg','arm'],tabsB:['enr','sixmw']};
+let mode='walk',saved={};
+const $=id=>document.getElementById(id);
+Object.keys(GROUPS).forEach(g=>GROUPS[g].forEach(k=>{
+  const b=document.createElement('button');
+  b.className='tab';b.role='tab';b.textContent=MODES[k].name;b.dataset.k=k;
+  b.onclick=()=>{mode=k;render();};
+  $(g).appendChild(b);
+}));
+
+function keep(){['wt','age','sex','dist'].forEach(i=>{if($(i))saved[i]=$(i).value;});}
+function sv(i){return saved[i]===undefined?'':saved[i];}
+function dobBlock(){
+  return `<div class="field" style="margin-bottom:12px"><label for="age">年齡（歲）</label><input id="age" type="number" inputmode="decimal" min="0" step="1" placeholder="例如 60" value="${sv('age')}"></div>`;
+}
+function sexBlock(){return `<div class="field"><label for="sex">性別</label><select id="sex"><option value="0">男</option><option value="1">女</option></select></div>`;}
+function wtBlock(){return `<div class="field"><label for="wt">體重（kg）</label><input id="wt" type="number" inputmode="decimal" min="0" step="0.1" placeholder="例如 65" value="${sv('wt')}"></div>`;}
+
+function render(){
+  keep();
+  const m=MODES[mode];
+  document.querySelectorAll('.tab').forEach(b=>b.setAttribute('aria-selected',b.dataset.k===mode));
+  $('formula').textContent=m.formula;
+  const L=m.type==='enr'?['預測 6MWD','m','占預測值百分比（填實測距離後顯示）','%']:m.type==='6mw'?['預測 VO₂peak','mL·kg⁻¹·min⁻¹','METs','']:['Gross VO₂','mL·kg⁻¹·min⁻¹','METs',''];
+  $('vk').textContent=L[0];$('vu').textContent=L[1];$('mk').textContent=L[2];$('mu').textContent=L[3];
+  if(m.type==='tread'){
+    $('inputs').innerHTML=`
+    <div class="row">
+      <div class="field"><label for="spd">速度</label><input id="spd" type="number" inputmode="decimal" min="0" step="any" placeholder="例如 5"></div>
+      <div class="field unit"><label for="spdu">單位</label><select id="spdu"><option value="16.6667">km/h</option><option value="1">m/min</option><option value="26.8224">mph</option></select></div>
+    </div>
+    <div class="field" style="margin-bottom:12px"><label for="gr">坡度（%）</label><input id="gr" type="number" inputmode="decimal" min="0" step="any" value="0"></div>`;
+  }else if(m.type==='erg'){
+    $('inputs').innerHTML=`
+    <div class="row">
+      <div class="field"><label for="pw">功率</label><input id="pw" type="number" inputmode="decimal" min="0" step="any" placeholder="例如 50"></div>
+      <div class="field unit"><label for="pwu">單位</label><select id="pwu"><option value="6.1182">Watts</option><option value="1">kg·m/min</option></select></div>
+    </div>
+    <div style="margin-bottom:6px">${wtBlock()}</div>`;
+  }else if(m.type==='6mw'){
+    $('inputs').innerHTML=`
+    <div class="field" style="margin-bottom:12px"><label for="dist">6 分鐘步行距離（m）</label><input id="dist" type="number" inputmode="decimal" min="0" step="any" placeholder="例如 450" value="${sv('dist')}"></div>
+    ${dobBlock()}
+    <div class="row">${sexBlock()}${wtBlock()}</div>
+    <div class="field" style="margin-bottom:12px"><label for="hr">靜息心率（bpm）</label><input id="hr" type="number" inputmode="decimal" min="0" step="1" placeholder="例如 75"></div>`;
+  }else{
+    $('inputs').innerHTML=`
+    ${dobBlock()}
+    <div class="row">${sexBlock()}<div class="field"><label for="ht">身高（cm）</label><input id="ht" type="number" inputmode="decimal" min="0" step="0.1" placeholder="例如 170"></div></div>
+    <div class="row">${wtBlock()}<div class="field"><label for="dist">實測 6MWD（m，選填）</label><input id="dist" type="number" inputmode="decimal" min="0" step="any" placeholder="例如 450" value="${sv('dist')}"></div></div>`;
+  }
+  if($('sex'))$('sex').value=saved.sex||'0';
+  $('inputs').querySelectorAll('input,select').forEach(e=>e.addEventListener('input',calc));
+  calc();
+}
+
+function num(id){const e=$(id);if(!e||e.value==='')return NaN;return parseFloat(e.value);}
+function show(id,v,d){$(id).textContent=isFinite(v)?v.toFixed(d):'—';}
+
+function getAge(){
+  const a=num('age');
+  return (isFinite(a)&&a>=0)?a:NaN;
+}
+
+function calc(){
+  const m=MODES[mode];const w=num('wt');let vo2=NaN,warn='';
+  if(m.type==='enr'){
+    const a=getAge(),h=num('ht'),sx=parseFloat($('sex').value),d=num('dist');
+    let p=NaN;
+    if([a,h,w].every(isFinite))p=sx===0?7.57*h-5.02*a-1.76*w-309:2.11*h-2.29*w-5.78*a+667;
+    show('vo2',p,0);
+    $('met').textContent=(isFinite(p)&&p>0&&isFinite(d))?(d/p*100).toFixed(1):'—';
+    $('warn').textContent=(isFinite(a)&&(a<40||a>80))?'提醒：本公式以 40–80 歲健康成人建立，且需依標準化 6MWT 流程施測。':'';
+    return;
+  }
+  if(m.type==='6mw'){
+    const d=num('dist'),hr=num('hr'),age=getAge(),sex=parseFloat($('sex').value);
+    if([d,w,hr,age].every(isFinite))vo2=70.161+0.023*d-0.276*w-6.79*sex-0.193*hr-0.191*age;
+    warn='提醒：本公式建立於健康成人，用於心臟病或術後族群屬外推；服用 β 阻斷劑會影響靜息心率。';
+  }else if(m.type==='tread'){
+    const s=num('spd')*parseFloat($('spdu').value);
+    const g=(isNaN(num('gr'))?0:num('gr'))/100;
+    if(isFinite(s)&&s>=0){
+      vo2=3.5+m.a*s+m.b*s*g;
+      if(mode==='walk'&&(s<50||s>100))warn='提醒：速度超出行走公式適用範圍（50–100 m/min，即 3.0–6.0 km/h）。';
+      if(mode==='run'&&s<80.4)warn='提醒：速度低於跑步公式的慢跑下限（約 4.8 km/h）。';
+      else if(mode==='run'&&s<134)warn='提醒：4.8–8.0 km/h 請確認受測者為慢跑步態（行走請改用行走公式）。';
+    }
+  }else{
+    const p=num('pw')*parseFloat($('pwu').value);
+    if(isFinite(p)&&p>=0){
+      if(!(w>0)){warn='請輸入體重以計算功率相關攝氧量。';}
+      else{
+        vo2=m.c+m.k*p/w;
+        if(mode==='leg'&&(p<300||p>1200))warn='提醒：功率超出下肢公式最準確範圍（50–200 W）。';
+        if(mode==='arm'&&(p<150||p>750))warn='提醒：功率超出上肢公式最準確範圍（25–125 W）。';
+      }
+    }
+  }
+  show('vo2',vo2,1);
+  show('met',vo2/3.5,1);
+  $('warn').textContent=warn;
+}
+render();
+</script>
+</body>
+</html>
